@@ -1,0 +1,140 @@
+{
+  "name": "WhatsApp Lead Qualification (WhatsApp + Odoo CRM)",
+  "nodes": [
+    {
+      "parameters": { "updates": ["messages"] },
+      "id": "1",
+      "name": "WhatsApp Trigger",
+      "type": "n8n-nodes-base.whatsAppTrigger",
+      "typeVersion": 1,
+      "position": [220, 340],
+      "credentials": { "whatsAppTriggerApi": { "id": "PASTE_CREDENTIAL_ID", "name": "WhatsApp OAuth account" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [{ "value1": "={{ $json.entry[0].changes[0].value.messages[0].type }}", "value2": "text" }]
+        }
+      },
+      "id": "2",
+      "name": "Is Text Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 340]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract the customer's contact information from the WhatsApp payload.\nconst msg = $json.entry[0].changes[0].value.messages[0];\nconst contact = $json.entry[0].changes[0].value.contacts[0];\nreturn [{ json: {\n  phone: msg.from,\n  name: contact && contact.profile ? contact.profile.name : '',\n  text: msg.text ? msg.text.body : '',\n  wa_id: contact ? contact.wa_id : msg.from\n} }];"
+      },
+      "id": "3",
+      "name": "Extract Contact Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 340]
+    },
+    {
+      "parameters": {
+        "resource": "contact",
+        "operation": "getAll",
+        "filters": { "fields": [{ "fieldName": "phone", "operator": "=", "value": "={{ $json.phone }}" }] },
+        "options": {}
+      },
+      "id": "4",
+      "name": "Search Contact By Phone (Odoo)",
+      "type": "n8n-nodes-base.odoo",
+      "typeVersion": 1,
+      "position": [940, 340],
+      "credentials": { "odooApi": { "id": "PASTE_CREDENTIAL_ID", "name": "Odoo account" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{ "value1": "={{ Array.isArray($json) ? $json.length > 0 : !!$json.id }}", "value2": true }]
+        }
+      },
+      "id": "5",
+      "name": "Contact Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1180, 340]
+    },
+    {
+      "parameters": {
+        "resource": "contact",
+        "operation": "create",
+        "fields": {
+          "name": "={{ $('Extract Contact Info').item.json.name || 'WhatsApp Lead' }}",
+          "phone": "={{ $('Extract Contact Info').item.json.phone }}"
+        },
+        "options": {}
+      },
+      "id": "6",
+      "name": "Create Contact (Odoo)",
+      "type": "n8n-nodes-base.odoo",
+      "typeVersion": 1,
+      "position": [1420, 440],
+      "credentials": { "odooApi": { "id": "PASTE_CREDENTIAL_ID", "name": "Odoo account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pick the right Partner ID: the existing contact, or the one just created.\nconst created = $json.id ? $json.id : null;\nconst existing = $('Search Contact By Phone (Odoo)').item.json;\nconst partnerId = created || (Array.isArray(existing) ? existing[0] && existing[0].id : existing.id);\nconst info = $('Extract Contact Info').item.json;\nreturn [{ json: { partner_id: partnerId, name: info.name, phone: info.phone, text: info.text } }];"
+      },
+      "id": "7",
+      "name": "Use Partner ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, 340]
+    },
+    {
+      "parameters": {
+        "resource": "opportunity",
+        "operation": "create",
+        "fields": {
+          "name": "={{ 'WhatsApp inquiry - ' + ($json.name || $json.phone) }}",
+          "partner_id": "={{ $json.partner_id }}",
+          "description": "={{ $json.text }}"
+        },
+        "options": {}
+      },
+      "id": "8",
+      "name": "Create Lead/Opportunity (Odoo)",
+      "type": "n8n-nodes-base.odoo",
+      "typeVersion": 1,
+      "position": [1900, 340],
+      "credentials": { "odooApi": { "id": "PASTE_CREDENTIAL_ID", "name": "Odoo account" } }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "PASTE_PHONE_NUMBER_ID",
+        "recipientPhoneNumber": "={{ $('Extract Contact Info').item.json.phone }}",
+        "textBody": "Thank you for contacting us! Our team received your message and will get back to you shortly.",
+        "options": {}
+      },
+      "id": "9",
+      "name": "Send WhatsApp Confirmation",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [2140, 340],
+      "credentials": { "whatsAppApi": { "id": "PASTE_CREDENTIAL_ID", "name": "WhatsApp account" } }
+    }
+  ],
+  "connections": {
+    "WhatsApp Trigger": { "main": [[{ "node": "Is Text Message?", "type": "main", "index": 0 }]] },
+    "Is Text Message?": { "main": [[{ "node": "Extract Contact Info", "type": "main", "index": 0 }]] },
+    "Extract Contact Info": { "main": [[{ "node": "Search Contact By Phone (Odoo)", "type": "main", "index": 0 }]] },
+    "Search Contact By Phone (Odoo)": { "main": [[{ "node": "Contact Exists?", "type": "main", "index": 0 }]] },
+    "Contact Exists?": {
+      "main": [
+        [{ "node": "Use Partner ID", "type": "main", "index": 0 }],
+        [{ "node": "Create Contact (Odoo)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create Contact (Odoo)": { "main": [[{ "node": "Use Partner ID", "type": "main", "index": 0 }]] },
+    "Use Partner ID": { "main": [[{ "node": "Create Lead/Opportunity (Odoo)", "type": "main", "index": 0 }]] },
+    "Create Lead/Opportunity (Odoo)": { "main": [[{ "node": "Send WhatsApp Confirmation", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {},
+  "pinData": {}
+}
